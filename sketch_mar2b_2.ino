@@ -303,7 +303,7 @@ let now=Date.now()
 
 if(now-lastNotify>60000){
 
-new Notification("⚡ Power Monitor",{
+new Notification("Power ⚡︎ Monitor",{
 body:"Voltage: "+data.v+" V\nPower: "+data.p+" W\nEnergy: "+data.e+" kWh"
 })
 
