@@ -1,5 +1,6 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPUpdateServer.h>
 #include <ESP8266mDNS.h>
 #include <PZEM004Tv30.h>
 #include <EEPROM.h>
@@ -9,6 +10,8 @@ const char* ap_password="11223344";
 const char* hostname="powermonitor";
 
 ESP8266WebServer server(80);
+ESP8266HTTPUpdateServer httpUpdater;
+
 PZEM004Tv30 pzem(Serial);
 
 float voltage,current,power,pf,freq;
@@ -36,17 +39,29 @@ const char webpage[] PROGMEM = R"=====(
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PowerMonitor</title>
-</head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>PowerMonitor</title>
 
 <style>
 
-body{font-family:Arial;background:#0f172a;color:white;margin:0;text-align:center;}
+body{
+font-family:Arial;
+background:#0f172a;
+color:white;
+margin:0;
+text-align:center;
+}
 
-.header{font-size:26px;padding:18px;background:#1e293b;}
+.header{
+font-size:26px;
+padding:18px;
+background:#1e293b;
+}
 
 .grid{
 display:grid;
@@ -61,8 +76,20 @@ padding:18px;
 border-radius:12px;
 }
 
-.value{font-size:24px;margin-top:8px;}
-.unit{font-size:13px;color:#94a3b8;}
+.value{
+font-size:24px;
+margin-top:8px;
+}
+
+.unit{
+font-size:13px;
+color:#94a3b8;
+}
+
+button{
+cursor:pointer;
+-webkit-tap-highlight-color:transparent;
+}
 
 .resetBtn{
 margin:20px;
@@ -117,6 +144,14 @@ font-size:16px;
 margin-top:10px;
 }
 
+.otaBtn{
+padding:10px 20px;
+border:none;
+border-radius:8px;
+background:#3b82f6;
+color:white;
+}
+
 .billtable{
 width:100%;
 margin-top:20px;
@@ -138,13 +173,6 @@ font-weight:bold;
 color:#22c55e;
 }
 
-.footer{
-margin-top:20px;
-margin-bottom: 20px;
-font-size:13px;
-color:#94a3b8;
-}
-
 #Volt{
     color: #ef4444;
 }
@@ -164,12 +192,20 @@ color:#94a3b8;
     color: magenta;
 }
 
+.footer{
+margin-top:20px;
+margin-bottom:20px;
+font-size:13px;
+color:#94a3b8;
+}
+
 </style>
+
 </head>
 
 <body>
 
-<div class="header"> Power ⚡︎ Monitor</div>
+<div class="header">Power ⚡︎ Monitor</div>
 
 <div class="grid">
 
@@ -180,9 +216,10 @@ color:#94a3b8;
 <div class="card">Frequency<div class="value" id="f">--</div><div class="unit"id="Hz">Hz</div></div>
 <div class="card">Power Factor<div class="value" id="pf">--</div><div class="unit"id="PF">PF</div></div>
 
+
 </div>
 
-<button id="resetBtn" class="resetBtn" onclick="resetStep()">Reset Energy</button>
+<button id="resetBtn" class="resetBtn">Reset Energy</button>
 
 <div class="billbox">
 
@@ -199,7 +236,7 @@ color:#94a3b8;
 </div>
 
 <div class="inputgroup">
-<label>Tax % (only on energy)</label>
+<label>Tax % (on total bill)</label>
 <input id="tax" type="number">
 </div>
 
@@ -218,7 +255,7 @@ color:#94a3b8;
 <input id="rate3" type="number">
 </div>
 
-<button class="saveBtn" onclick="saveTariff()">Save Calculator Settings</button>
+<button id="saveBtn" class="saveBtn">Save Calculator Settings</button>
 
 <table class="billtable">
 
@@ -232,41 +269,55 @@ color:#94a3b8;
 
 </div>
 
-<div class="footer">
-Made with ❤️ by Lokesh
-</div>
+<a href="/update">
+<button id="otaBtn" class="otaBtn">Firmware Update</button>
+</a>
+
+<div class="footer">Made with ❤️ by Lokesh</div>
 
 <script>
+
+function vibrate(){
+if(navigator.vibrate){
+navigator.vibrate(40);
+}
+}
+
+/* Notification permission */
+
+function requestNotificationPermission(){
+if("Notification" in window){
+if(Notification.permission!=="granted"){
+Notification.requestPermission();
+}
+}
+}
+
+let lastNotify=0
+
+function powerNotification(data){
+
+if(Notification.permission==="granted"){
+
+let now=Date.now()
+
+if(now-lastNotify>60000){
+
+new Notification("⚡ Power Monitor",{
+body:"Voltage: "+data.v+" V\nPower: "+data.p+" W\nEnergy: "+data.e+" kWh"
+})
+
+lastNotify=now
+
+}
+
+}
+
+}
 
 let confirmMode=false
 let countdown=5
 let timer
-
-function update(){
-fetch("/data")
-.then(r=>r.json())
-.then(data=>{
-
-v.innerHTML=data.v
-c.innerHTML=data.c
-p.innerHTML=data.p
-e.innerHTML=data.e
-f.innerHTML=data.f
-pf.innerHTML=data.pf
-
-if(!meter.value){
-meter.value=data.meter
-ship.value=data.ship
-tax.value=data.tax
-rate1.value=data.r1
-rate2.value=data.r2
-rate3.value=data.r3
-}
-
-calcBill()
-
-})
-}
 
 function resetStep(){
 
@@ -294,13 +345,9 @@ btn.innerHTML="Reset Energy"
 }else{
 
 fetch("/reset")
-.then(()=>{
-
 clearInterval(timer)
 confirmMode=false
 btn.innerHTML="Reset Energy"
-
-})
 
 }
 
@@ -328,9 +375,11 @@ else
 energyCharge=(100*r1)+(200*r2)+((units-300)*r3)
 
 let shippingCost=units*shipCharge
-let taxAmount=energyCharge*(taxPercent/100)
 
-let total=meterCharge+energyCharge+shippingCost+taxAmount
+let subtotal=energyCharge+meterCharge+shippingCost
+let taxAmount=subtotal*(taxPercent/100)
+
+let total=subtotal+taxAmount
 
 energyCost.innerHTML=energyCharge.toFixed(2)+" ₹"
 meterCost.innerHTML=meterCharge.toFixed(2)+" ₹"
@@ -343,11 +392,49 @@ bill.innerHTML=total.toFixed(2)+" ₹"
 function saveTariff(){
 
 fetch(`/tariff?meter=${meter.value}&ship=${ship.value}&tax=${tax.value}&r1=${rate1.value}&r2=${rate2.value}&r3=${rate3.value}`)
-.then(()=>{alert("Calculator values saved")})
+.then(()=>alert("Calculator values saved"))
 
 }
 
-setInterval(update,2000)
+function update(){
+
+fetch("/data")
+.then(r=>r.json())
+.then(data=>{
+
+v.innerHTML=data.v
+c.innerHTML=data.c
+p.innerHTML=data.p
+e.innerHTML=data.e
+f.innerHTML=data.f
+pf.innerHTML=data.pf
+
+if(!meter.value){
+meter.value=data.meter
+ship.value=data.ship
+tax.value=data.tax
+rate1.value=data.r1
+rate2.value=data.r2
+rate3.value=data.r3
+}
+
+calcBill()
+
+if(data.p>5){
+powerNotification(data)
+}
+
+})
+
+}
+
+document.getElementById("resetBtn").addEventListener("click",()=>{vibrate();resetStep();});
+document.getElementById("saveBtn").addEventListener("click",()=>{vibrate();saveTariff();});
+document.getElementById("otaBtn").addEventListener("click",()=>{vibrate();});
+
+requestNotificationPermission()
+
+setInterval(update,1500)
 update()
 
 </script>
@@ -356,6 +443,7 @@ update()
 </html>
 
 )=====";
+
 
 void handleRoot(){ server.send_P(200,"text/html",webpage); }
 
@@ -389,13 +477,19 @@ power=pzem.power();
 freq=pzem.frequency();
 pf=pzem.pf();
 
+if(isnan(voltage)) voltage=0;
+if(isnan(current)) current=0;
+if(isnan(power)) power=0;
+if(isnan(freq)) freq=0;
+if(isnan(pf)) pf=0;
+
 unsigned long now=millis();
 double hours=(now-lastSample)/3600000.0;
 
 energy_kwh+=(power*hours)/1000.0;
 lastSample=now;
 
-if(millis()-lastSave>120000){
+if(millis()-lastSave>300000){
 EEPROM.put(ENERGY_ADDR,energy_kwh);
 EEPROM.commit();
 lastSave=millis();
@@ -434,14 +528,14 @@ EEPROM.get(TARIFF_ADDR,tariff);
 WiFi.mode(WIFI_AP);
 WiFi.softAP(ap_ssid,ap_password);
 
-if(MDNS.begin(hostname)){
-Serial.println("mDNS started");
-}
+MDNS.begin(hostname);
 
 server.on("/",handleRoot);
 server.on("/data",handleData);
 server.on("/reset",handleReset);
 server.on("/tariff",handleTariff);
+
+httpUpdater.setup(&server);
 
 server.begin();
 
