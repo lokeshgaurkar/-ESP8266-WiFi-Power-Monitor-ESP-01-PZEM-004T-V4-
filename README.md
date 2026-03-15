@@ -83,7 +83,7 @@ The web dashboard displays:
 * Frequency (Hz)
 * Power Factor (PF)
 
-Data updates every **2 seconds**.
+Data updates every **1.5 seconds**.
 
 ---
 
