@@ -473,7 +473,13 @@ void handleData(){
 
 voltage=pzem.voltage();
 current=pzem.current();
-power=pzem.power();
+// -------- CALIBRATION APPLIED --------
+float rawPower = pzem.power();
+if(isnan(rawPower)) rawPower = 0;
+
+power = rawPower - 4.0;
+if(power < 0) power = 0;
+// ------------------------------------
 freq=pzem.frequency();
 pf=pzem.pf();
 
